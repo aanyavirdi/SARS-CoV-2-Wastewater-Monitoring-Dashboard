@@ -1,0 +1,275 @@
+"""
+SARS-CoV-2 Wastewater Monitoring Data Processing
+Author: [Your Name]
+Description: Processes wastewater monitoring data to detect viral concentrations
+             and identify trends across Wisconsin regions
+"""
+
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+class WastewaterAnalyzer:
+    """
+    A class to analyze SARS-CoV-2 wastewater monitoring data
+    """
+    
+    def __init__(self, data_path):
+        """
+        Initialize the analyzer with data
+        
+        Args:
+            data_path (str): Path to the CSV file containing wastewater data
+        """
+        self.data = None
+        self.processed_data = None
+        self.load_data(data_path)
+    
+    def load_data(self, data_path):
+        """Load and perform initial data validation"""
+        try:
+            self.data = pd.read_csv(data_path)
+            print(f"Data loaded successfully: {self.data.shape[0]} rows, {self.data.shape[1]} columns")
+            self.validate_data()
+        except FileNotFoundError:
+            print(f"Error: File not found at {data_path}")
+            self.data = self.generate_sample_data()
+    
+    def validate_data(self):
+        """Validate data structure and handle missing values"""
+        required_columns = ['date', 'region', 'viral_concentration']
+        
+        missing_cols = [col for col in required_columns if col not in self.data.columns]
+        if missing_cols:
+            print(f"Warning: Missing columns {missing_cols}")
+        
+        # Handle missing values
+        missing_count = self.data.isnull().sum()
+        if missing_count.any():
+            print(f"\nMissing values detected:\n{missing_count[missing_count > 0]}")
+    
+    def generate_sample_data(self):
+        """Generate sample wastewater data for demonstration"""
+        print("Generating sample data for demonstration...")
+        
+        regions = ['Madison', 'Milwaukee', 'Green Bay', 'Kenosha', 'Racine']
+        dates = pd.date_range(start='2023-01-01', end='2024-01-01', freq='D')
+        
+        data = []
+        for region in regions:
+            base_concentration = np.random.uniform(100, 500)
+            for date in dates:
+                # Add trend and seasonality
+                trend = np.random.normal(0, 50)
+                seasonal = 100 * np.sin(2 * np.pi * date.dayofyear / 365)
+                noise = np.random.normal(0, 30)
+                
+                concentration = max(0, base_concentration + trend + seasonal + noise)
+                
+                data.append({
+                    'date': date,
+                    'region': region,
+                    'viral_concentration': concentration,
+                    'population': np.random.randint(50000, 500000),
+                    'samples_collected': np.random.randint(3, 10)
+                })
+        
+        return pd.DataFrame(data)
+    
+    def clean_data(self):
+        """Clean and preprocess the data"""
+        df = self.data.copy()
+        
+        # Convert date to datetime
+        df['date'] = pd.to_datetime(df['date'])
+        
+        # Remove outliers using IQR method
+        Q1 = df['viral_concentration'].quantile(0.25)
+        Q3 = df['viral_concentration'].quantile(0.75)
+        IQR = Q3 - Q1
+        
+        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 1.5 * IQR
+        
+        df_cleaned = df[
+            (df['viral_concentration'] >= lower_bound) & 
+            (df['viral_concentration'] <= upper_bound)
+        ]
+        
+        outliers_removed = len(df) - len(df_cleaned)
+        print(f"Removed {outliers_removed} outliers")
+        
+        # Sort by date
+        df_cleaned = df_cleaned.sort_values('date')
+        
+        self.processed_data = df_cleaned
+        return df_cleaned
+    
+    def calculate_rolling_average(self, window=7):
+        """Calculate rolling average for trend analysis"""
+        if self.processed_data is None:
+            self.clean_data()
+        
+        df = self.processed_data.copy()
+        df['rolling_avg'] = df.groupby('region')['viral_concentration'].transform(
+            lambda x: x.rolling(window=window, min_periods=1).mean()
+        )
+        
+        self.processed_data = df
+        return df
+    
+    def detect_anomalies(self, threshold=2.5):
+        """
+        Detect anomalies using statistical methods
+        
+        Args:
+            threshold (float): Number of standard deviations for anomaly detection
+        """
+        if self.processed_data is None:
+            self.calculate_rolling_average()
+        
+        df = self.processed_data.copy()
+        
+        # Calculate z-scores for each region
+        df['z_score'] = df.groupby('region')['viral_concentration'].transform(
+            lambda x: (x - x.mean()) / x.std()
+        )
+        
+        # Flag anomalies
+        df['is_anomaly'] = np.abs(df['z_score']) > threshold
+        
+        anomaly_count = df['is_anomaly'].sum()
+        print(f"Detected {anomaly_count} anomalies across all regions")
+        
+        self.processed_data = df
+        return df[df['is_anomaly']]
+    
+    def calculate_regional_stats(self):
+        """Calculate summary statistics by region"""
+        if self.processed_data is None:
+            self.clean_data()
+        
+        stats = self.processed_data.groupby('region').agg({
+            'viral_concentration': ['mean', 'median', 'std', 'min', 'max'],
+            'samples_collected': 'sum'
+        }).round(2)
+        
+        return stats
+    
+    def analyze_trends(self):
+        """Analyze temporal trends in viral concentrations"""
+        if self.processed_data is None:
+            self.calculate_rolling_average()
+        
+        df = self.processed_data.copy()
+        df['month'] = df['date'].dt.to_period('M')
+        
+        monthly_trends = df.groupby(['month', 'region'])['viral_concentration'].mean().reset_index()
+        
+        return monthly_trends
+    
+    def visualize_trends(self, save_path=None):
+        """Create visualization of viral concentration trends"""
+        if self.processed_data is None:
+            self.calculate_rolling_average()
+        
+        fig, axes = plt.subplots(2, 1, figsize=(14, 10))
+        
+        # Plot 1: Time series for all regions
+        for region in self.processed_data['region'].unique():
+            region_data = self.processed_data[self.processed_data['region'] == region]
+            axes[0].plot(region_data['date'], region_data['rolling_avg'], 
+                        label=region, linewidth=2, alpha=0.8)
+        
+        axes[0].set_title('SARS-CoV-2 Viral Concentration Trends by Region (7-day Rolling Average)', 
+                         fontsize=14, fontweight='bold')
+        axes[0].set_xlabel('Date', fontsize=12)
+        axes[0].set_ylabel('Viral Concentration', fontsize=12)
+        axes[0].legend(loc='best')
+        axes[0].grid(True, alpha=0.3)
+        
+        # Plot 2: Box plot of concentrations by region
+        self.processed_data.boxplot(column='viral_concentration', by='region', ax=axes[1])
+        axes[1].set_title('Distribution of Viral Concentrations by Region', 
+                         fontsize=14, fontweight='bold')
+        axes[1].set_xlabel('Region', fontsize=12)
+        axes[1].set_ylabel('Viral Concentration', fontsize=12)
+        plt.suptitle('')
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Visualization saved to {save_path}")
+        
+        plt.show()
+    
+    def export_for_tableau(self, output_path='tableau_data.csv'):
+        """Export processed data for Tableau dashboard"""
+        if self.processed_data is None:
+            self.calculate_rolling_average()
+        
+        # Prepare data with all necessary fields for Tableau
+        export_data = self.processed_data.copy()
+        export_data['date'] = export_data['date'].dt.strftime('%Y-%m-%d')
+        
+        export_data.to_csv(output_path, index=False)
+        print(f"Data exported for Tableau: {output_path}")
+        print(f"Total records: {len(export_data)}")
+    
+    def generate_report(self):
+        """Generate a comprehensive analysis report"""
+        if self.processed_data is None:
+            self.clean_data()
+            self.calculate_rolling_average()
+            self.detect_anomalies()
+        
+        print("\n" + "="*60)
+        print("SARS-CoV-2 WASTEWATER MONITORING REPORT")
+        print("="*60 + "\n")
+        
+        print("SUMMARY STATISTICS BY REGION:")
+        print(self.calculate_regional_stats())
+        
+        print("\n\nANOMALY DETECTION RESULTS:")
+        anomalies = self.detect_anomalies()
+        print(f"Total anomalies detected: {len(anomalies)}")
+        
+        if len(anomalies) > 0:
+            print("\nTop 5 highest concentration anomalies:")
+            print(anomalies.nlargest(5, 'viral_concentration')[
+                ['date', 'region', 'viral_concentration', 'z_score']
+            ])
+
+
+def main():
+    """Main execution function"""
+    # Initialize analyzer with data
+    analyzer = WastewaterAnalyzer('wastewater_data.csv')
+    
+    # Process data
+    print("\nCleaning data...")
+    analyzer.clean_data()
+    
+    print("\nCalculating rolling averages...")
+    analyzer.calculate_rolling_average(window=7)
+    
+    print("\nDetecting anomalies...")
+    analyzer.detect_anomalies(threshold=2.5)
+    
+    # Generate visualizations
+    print("\nGenerating visualizations...")
+    analyzer.visualize_trends(save_path='wastewater_trends.png')
+    
+    # Export for Tableau
+    print("\nExporting data for Tableau...")
+    analyzer.export_for_tableau()
+    
+    # Generate comprehensive report
+    analyzer.generate_report()
+
+
+if __name__ == "__main__":
+    main()
